@@ -41,6 +41,10 @@ export type LogLevel = (typeof LOG_LEVELS)[number];
 export const STATE_REMOVAL_POLICIES = ["DESTROY", "RETAIN"] as const;
 export type StateRemovalPolicy = (typeof STATE_REMOVAL_POLICIES)[number];
 
+/** Where a connector's EDC control plane and data plane keep their state. */
+export const PERSISTENCE_TYPES = ["dynamodb", "aurora"] as const;
+export type PersistenceType = (typeof PERSISTENCE_TYPES)[number];
+
 export const BASYX_SERVICES = ["dtr", "submodelRepository"] as const;
 export type BasyxService = (typeof BASYX_SERVICES)[number];
 
@@ -84,6 +88,8 @@ export interface DeploymentYaml {
   readonly portal: PortalConfig;
   /** Removal policy for stored state; connectors and BaSyx entries may override it. Default RETAIN. */
   readonly stateRemovalPolicy: StateRemovalPolicy;
+  /** EDC store of all connectors; a connector may override it. Default "dynamodb". */
+  readonly persistence: PersistenceType;
   /** Eclipse BaSyx (Digital Twin Registry + Submodel Repository) per BPNL, keyed by BPNL. */
   readonly basyx?: Record<string, BasyxEntry>;
 }
@@ -122,6 +128,8 @@ export interface ConnectorYaml {
   readonly stateRemovalPolicy: StateRemovalPolicy;
   /** Default: the deployment.yaml logLevel. */
   readonly logLevel?: LogLevel;
+  /** Default: the deployment.yaml persistence. */
+  readonly persistence: PersistenceType;
 }
 
 /** Loaded deployment configuration (raw YAML, validated). */
@@ -136,7 +144,11 @@ export interface DeploymentConfig {
  * connectorId constraints (must be compatible with all usage sites):
  * lowercase alphanumeric + hyphens, 2–60 chars, no leading/trailing hyphen.
  * Used in ALB paths, URL rewrite regex, API Gateway paths, Secrets Manager
- * prefixes, CloudFormation stack names, DynamoDB table names, ECS runtime IDs.
+ * prefixes, CloudFormation stack names, DynamoDB table names, ECS runtime IDs
+ * and, for persistence "aurora", the Aurora cluster identifier. The cluster
+ * identifier also carries the deploymentName and has a 63-character limit that
+ * the bounds here and on deploymentName (60 + 41) do not guarantee, so the
+ * connector stack checks the combination with validateClusterIdentifier.
  */
 export function validateConnectorId(connectorId: string): void {
   if (!/^[a-z0-9][a-z0-9-]{0,58}[a-z0-9]$/.test(connectorId)) {
@@ -233,6 +245,42 @@ export function deriveConnectorTableName(
   return `${deploymentName}-${connectorId}`;
 }
 
+/** Derives a connector's Aurora cluster identifier (RDS stores identifiers lowercase). */
+export function deriveConnectorClusterIdentifier(
+  deploymentName: string,
+  connectorId: string,
+): string {
+  return deriveConnectorTableName(deploymentName, connectorId).toLowerCase();
+}
+
+const CLUSTER_IDENTIFIER_MAX = 63;
+
+/**
+ * Throws if the Aurora cluster identifier of this deployment and connector
+ * breaks an RDS naming rule: at most 63 characters, starts with a letter, no
+ * two consecutive hyphens. The connectorId already rules out a trailing hyphen.
+ * Call it for connectors whose persistence is "aurora".
+ */
+export function validateClusterIdentifier(
+  deploymentName: string,
+  connectorId: string,
+): void {
+  const id = deriveConnectorClusterIdentifier(deploymentName, connectorId);
+  const problem =
+    id.length > CLUSTER_IDENTIFIER_MAX
+      ? `is ${id.length} characters (max ${CLUSTER_IDENTIFIER_MAX})`
+      : !/^[a-z]/.test(id)
+        ? "must start with a letter"
+        : id.includes("--")
+          ? "must not contain two consecutive hyphens"
+          : undefined;
+  if (problem !== undefined) {
+    throw new Error(
+      `connector ${connectorId}: Aurora cluster identifier "${id}" ${problem}; shorten the deploymentName or the connectorId`,
+    );
+  }
+}
+
 /** Maps the YAML removal-policy string to the CDK enum. */
 export function toRemovalPolicy(value: StateRemovalPolicy): RemovalPolicy {
   return value === "RETAIN" ? RemovalPolicy.RETAIN : RemovalPolicy.DESTROY;
@@ -289,6 +337,7 @@ const DEPLOYMENT_KEY_SPEC: KeySpec = {
       } satisfies Record<keyof PortalConfig, KeySpec>,
     },
     stateRemovalPolicy: LEAF,
+    persistence: LEAF,
     basyx: {
       mapOf: {
         keys: {
@@ -316,6 +365,7 @@ const CONNECTOR_KEY_SPEC: KeySpec = {
     dataPlaneFlowLeaseMillis: LEAF,
     stateRemovalPolicy: LEAF,
     logLevel: LEAF,
+    persistence: LEAF,
   } satisfies Record<keyof ConnectorYaml, KeySpec>,
 };
 
@@ -378,6 +428,7 @@ export function loadDeploymentConfig(configPath: string): DeploymentConfig {
     vpcIpAddresses: "10.0.0.0/20",
     containerInsights: false,
     stateRemovalPolicy: "RETAIN",
+    persistence: "dynamodb",
     ...rawDeployment,
   } as DeploymentYaml;
   validateDeployment(deployment, deploymentPath);
@@ -405,6 +456,7 @@ export function loadDeploymentConfig(configPath: string): DeploymentConfig {
       dataPlaneFlowLeaseMillis: 10000,
       stateRemovalPolicy: deployment.stateRemovalPolicy,
       logLevel: deployment.logLevel,
+      persistence: deployment.persistence,
       ...raw,
     } as ConnectorYaml;
     validateConnector(connector, file);
@@ -419,6 +471,11 @@ export function loadDeploymentConfig(configPath: string): DeploymentConfig {
       connector.stateRemovalPolicy,
       `connectors/${file}`,
       "stateRemovalPolicy",
+    );
+    validatePersistence(
+      connector.persistence,
+      `connectors/${file}`,
+      "persistence",
     );
     return connector;
   });
@@ -495,6 +552,7 @@ function validateDeployment(data: DeploymentYaml, filePath: string): void {
     "deployment.yaml",
     "stateRemovalPolicy",
   );
+  validatePersistence(data.persistence, "deployment.yaml", "persistence");
 }
 
 function validateConnector(data: ConnectorYaml, fileName: string): void {
@@ -542,6 +600,18 @@ function validateStateRemovalPolicy(
   ) {
     throw new Error(
       `${file}: ${path} must be "RETAIN" or "DESTROY", got "${String(value)}"`,
+    );
+  }
+}
+
+/** Throws unless value is omitted, "dynamodb" or "aurora". */
+function validatePersistence(value: unknown, file: string, path: string): void {
+  if (
+    value !== undefined &&
+    !PERSISTENCE_TYPES.includes(value as PersistenceType)
+  ) {
+    throw new Error(
+      `${file}: ${path} must be "dynamodb" or "aurora", got "${String(value)}"`,
     );
   }
 }
