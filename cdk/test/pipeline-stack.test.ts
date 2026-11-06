@@ -64,12 +64,15 @@ describe("runtimeJarTasks", () => {
 });
 
 describe("PipelineStack Synth step", () => {
-  // Every connector still runs the DynamoDB image in this unit, so the
-  // aurora-only rendering is covered by runtimeJarTasks above; a full stage
-  // with only Aurora connectors needs the connector-level image selection.
   test("dynamodb only: renders the unchanged command", () => {
     expect(gradleCommand(config("dynamodb", "dynamodb"))).toEqual([
       "cd edc && ./gradlew clean shadowJar",
+    ]);
+  });
+
+  test("aurora only: builds the PostgreSQL jars alone", () => {
+    expect(gradleCommand(config("aurora", "aurora"))).toEqual([
+      "cd edc && ./gradlew clean postgresShadowJar",
     ]);
   });
 
