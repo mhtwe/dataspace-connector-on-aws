@@ -361,7 +361,7 @@ describe("ConnectorStack with persistence aurora", () => {
     ["RETAIN", true, "Retain"],
     ["DESTROY", false, "Delete"],
   ] as const)(
-    "stateRemovalPolicy %s: deletionProtection %s, cluster and secret %s",
+    "stateRemovalPolicy %s: deletionProtection %s, cluster, secret and security group %s",
     (stateRemovalPolicy, deletionProtection, policy) => {
       const t = Template.fromStack(
         connectorStack(
@@ -374,10 +374,23 @@ describe("ConnectorStack with persistence aurora", () => {
         DeletionPolicy: policy,
       });
       t.hasResource("AWS::RDS::DBInstance", { DeletionPolicy: policy });
+      t.hasResource("AWS::EC2::SecurityGroup", {
+        Properties: { GroupDescription: Match.stringLikeRegexp("Aurora") },
+        DeletionPolicy: policy,
+      });
       t.hasResource("AWS::SecretsManager::Secret", {
         Properties: { GenerateSecretString: Match.anyValue() },
         DeletionPolicy: policy,
       });
+      // The ingress rules are always deleted: retained, they would keep
+      // referencing the planes' security groups and block their deletion.
+      const ingress = Object.values(
+        t.findResources("AWS::EC2::SecurityGroupIngress"),
+      );
+      expect(ingress).toHaveLength(2);
+      for (const rule of ingress) {
+        expect(rule.DeletionPolicy).toBeUndefined();
+      }
     },
   );
 });
