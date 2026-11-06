@@ -402,6 +402,18 @@ export function basyxEntries(
     .map(([bpnl, entry]) => ({ ...entry, bpnl }));
 }
 
+/**
+ * The distinct persistence types of the configured connectors, in
+ * PERSISTENCE_TYPES order. It selects which runtime images are built and which
+ * Gradle jar tasks the pipeline runs.
+ */
+export function persistenceTypesInUse(
+  config: DeploymentConfig,
+): Set<PersistenceType> {
+  const used = new Set(config.connectors.map((c) => c.persistence));
+  return new Set(PERSISTENCE_TYPES.filter((t) => used.has(t)));
+}
+
 /** CloudFormation stack name of a BPNL's BaSyx stack. */
 export function basyxStackName(stackPrefix: string, bpnl: string): string {
   return `${stackPrefix}-BaSyx-${bpnl}`;

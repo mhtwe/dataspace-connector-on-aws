@@ -21,7 +21,9 @@ import {
   basyxEntries,
   basyxStackName,
   DeploymentConfig,
+  PersistenceType,
   PipelineYaml,
+  persistenceTypesInUse,
   resolveDeploymentName,
 } from "./config/config";
 import { resolve } from "path";
@@ -29,6 +31,19 @@ import { resolve } from "path";
 export interface PipelineStackProps extends StackProps {
   readonly pipelineConfig: PipelineYaml;
   readonly deploymentConfig: DeploymentConfig;
+}
+
+/**
+ * The Gradle tasks that build the runtime jars the connectors' images need:
+ * shadowJar for DynamoDB, postgresShadowJar for Aurora.
+ */
+export function runtimeJarTasks(
+  persistence: ReadonlySet<PersistenceType>,
+): string[] {
+  return [
+    ...(persistence.has("dynamodb") ? ["shadowJar"] : []),
+    ...(persistence.has("aurora") ? ["postgresShadowJar"] : []),
+  ];
 }
 
 export class PipelineStack extends Stack {
@@ -56,6 +71,10 @@ export class PipelineStack extends Stack {
             "main",
           );
 
+    const jarTasks = runtimeJarTasks(
+      persistenceTypesInUse(props.deploymentConfig),
+    ).join(" ");
+
     const synth = new CodeBuildStep("Synth", {
       input: configSource,
       buildEnvironment: { buildImage: LinuxBuildImage.STANDARD_7_0 },
@@ -65,7 +84,7 @@ export class PipelineStack extends Stack {
         `echo "Using app version: $APP_VERSION"`,
         `git clone https://github.com/${config.appRepo}.git app`,
         `cd app && git checkout "$APP_VERSION"`,
-        `cd edc && ./gradlew clean shadowJar`,
+        `cd edc && ./gradlew clean ${jarTasks}`,
         `cd ../cdk && npm ci --ignore-scripts && npx tsc`,
         `npx cdk synth --app 'node dist/app.js' --context config-path=../..`,
       ],

@@ -234,7 +234,9 @@ export class ConnectorStack extends Stack {
 
     const controlPlane = new EdcRuntime(this, "ControlPlane", {
       ...common,
-      image: ContainerImage.fromDockerImageAsset(infra.controlPlaneImage),
+      image: ContainerImage.fromDockerImageAsset(
+        infra.controlPlaneImages.dynamodb!,
+      ),
       cpu: connector.controlPlaneCpu,
       memoryLimitMiB: connector.controlPlaneMemoryLimitMiB,
       ports: cpPorts,
@@ -256,7 +258,9 @@ export class ConnectorStack extends Stack {
     const dataPlanePublicUrl = `${infra.dataPlaneUrl}${connectorId}/`;
     const dataPlane = new EdcRuntime(this, "DataPlane", {
       ...common,
-      image: ContainerImage.fromDockerImageAsset(infra.dataPlaneImage),
+      image: ContainerImage.fromDockerImageAsset(
+        infra.dataPlaneImages.dynamodb!,
+      ),
       cpu: connector.dataPlaneCpu,
       memoryLimitMiB: connector.dataPlaneMemoryLimitMiB,
       ports: dpPorts,

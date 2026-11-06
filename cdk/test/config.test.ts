@@ -27,6 +27,7 @@ import {
   basyxEntries,
   loadDeploymentConfig,
   loadPipelineConfig,
+  persistenceTypesInUse,
 } from "../lib/config/config";
 import { RemovalPolicy } from "aws-cdk-lib";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
@@ -479,6 +480,61 @@ describe("persistence", () => {
     expect(() => loadDeploymentConfig(dir)).toThrow(
       'connectors/connector-a.yaml: persistence must be "dynamodb" or "aurora", got "null"',
     );
+  });
+
+  describe("persistenceTypesInUse", () => {
+    const typesIn = (
+      deploymentPersistence: string | undefined,
+      overrides: Array<string | undefined>,
+    ) => {
+      const connectors = Object.fromEntries(
+        overrides.map((persistence, i) => [
+          `c${i}`,
+          {
+            ...baseConnector(`conn-${i}`),
+            ...(persistence ? { persistence } : {}),
+          },
+        ]),
+      );
+      return [
+        ...persistenceTypesInUse(
+          loadDeploymentConfig(
+            writeConfig(
+              {
+                ...baseDeployment(),
+                ...(deploymentPersistence
+                  ? { persistence: deploymentPersistence }
+                  : {}),
+              },
+              connectors,
+            ),
+          ),
+        ),
+      ];
+    };
+
+    test("is dynamodb alone by default", () => {
+      expect(typesIn(undefined, [undefined, undefined])).toEqual(["dynamodb"]);
+    });
+
+    test("follows the deployment default", () => {
+      expect(typesIn("aurora", [undefined, undefined])).toEqual(["aurora"]);
+    });
+
+    test("is aurora alone when every connector overrides to aurora", () => {
+      expect(typesIn(undefined, ["aurora", "aurora"])).toEqual(["aurora"]);
+    });
+
+    test("lists both types in PERSISTENCE_TYPES order, once each", () => {
+      expect(typesIn(undefined, ["aurora", undefined, "aurora"])).toEqual([
+        "dynamodb",
+        "aurora",
+      ]);
+      expect(typesIn("aurora", ["dynamodb", undefined])).toEqual([
+        "dynamodb",
+        "aurora",
+      ]);
+    });
   });
 
   test("a misspelled key is still rejected", () => {
