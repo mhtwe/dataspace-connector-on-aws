@@ -5,8 +5,8 @@ Agent guidance for this repo. Humans: start with `README.md`.
 ## What this is
 A CDK-deployed, multi-connector distribution of Tractus-X EDC (Eclipse Dataspace
 Components) on AWS: custom EDC control-plane/data-plane runtimes with DynamoDB-backed
-stores (or the upstream PostgreSQL stores on Aurora, per connector), API Gateway front doors, a GitOps deploy pipeline, and an MCP server for
-operating connectors.
+stores (or the upstream PostgreSQL stores on Aurora, per connector), API Gateway front
+doors, a GitOps deploy pipeline, and an MCP server for operating connectors.
 
 ## Layout
 - `edc/` — EDC runtimes (Gradle/Kotlin, Java 17). `control-plane/`, `data-plane/`

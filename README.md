@@ -143,17 +143,22 @@ For each connector the pipeline creates a Cofinity-X Portal technical user (**Id
 Each connector keeps its EDC state (assets, policies, contract definitions, negotiations, agreements, transfers, EDRs) in a store of its own, selected by `persistence`:
 
 * **`dynamodb`** (default): one on-demand DynamoDB table named `<deploymentName>-<connectorId>`, accessed by the task role. Both planes run this project's DynamoDB store extensions.
-* **`aurora`**: one Aurora Serverless v2 PostgreSQL cluster with the identifier `<deploymentname>-<connectorid>` (lowercase; the combination must fit RDS's 63-character limit, or synth fails), a database named `edc`, a credentials secret in AWS Secrets Manager with the user `edc`, and a security group that admits only the connector's two Fargate services on port 5432. The cluster is Serverless v2 with a higher capacity ceiling under `production`, encrypts its storage, keeps backups for 1 (`development`) or 7 (`production`) days, and has deletion protection under `RETAIN`. It is configured to pause after 5 idle minutes, but the control plane's state machines query the store on their `interactiveStateMachineIterationMillis` / `backgroundStateMachineIterationMillis` schedule, so in practice it does not pause. Both planes run the upstream Tractus-X PostgreSQL stores and the Tractus-X Flyway migration (`connector-migration`) at boot, which creates and upgrades the schema; the first boot therefore takes longer, and the ECS health check grace period of Aurora connectors is 5 minutes. The connector stack outputs `EdcAuroraClusterEndpoint` and `EdcAuroraSecretArn`.
+* **`aurora`**: one Aurora Serverless v2 PostgreSQL cluster per connector, with the identifier `<deploymentname>-<connectorid>` (lowercase). The identifier must follow RDS's naming rules, or synth fails: at most 63 characters, starting with a letter, and no two consecutive hyphens.
+  * The cluster has a database named `edc`, a credentials secret in AWS Secrets Manager with the user `edc`, and a security group that admits only the connector's two Fargate services on port 5432.
+  * It has a higher capacity ceiling and keeps backups for 7 days under the connector's `profile: production`, and keeps backups for 1 day under `development`. It encrypts its storage and has deletion protection under `RETAIN`.
+  * It is configured to pause after 5 idle minutes, but the control plane's state machines query the store on their `interactiveStateMachineIterationMillis` / `backgroundStateMachineIterationMillis` schedule, so in practice it does not pause.
+  * Both planes run the upstream Tractus-X PostgreSQL stores and the Tractus-X Flyway migration (`connector-migration`) at boot, which creates and upgrades the schema. The first boot therefore takes longer, and the ECS health check grace period of Aurora connectors is 5 minutes.
+  * The connector stack outputs `EdcAuroraClusterEndpoint` and `EdcAuroraSecretArn`.
 
 The choice is made when a connector is created. Changing `persistence` on an existing connector provisions an empty store of the new type and the runtimes start against it; EDC state does not move, and the old table or cluster stays or goes with `stateRemovalPolicy`.
 
-Under `stateRemovalPolicy: RETAIN`, removing an `aurora` connector leaves its cluster, the cluster's writer instance and DB subnet group, its credentials secret and its security group in your account. The cluster keeps its fixed identifier, so delete these manually before adding the connector again. The security group lives in the shared VPC, so it also has to go before the `SharedInfra` stack can be deleted (see [Teardown](#teardown)).
+Under `stateRemovalPolicy: RETAIN`, removing an `aurora` connector leaves its cluster, the cluster's writer instance and DB subnet group, its credentials secret and its security group in your account. The cluster keeps its fixed identifier, so delete these manually before adding the connector again; the retained cluster has deletion protection, so disable it first. The security group lives in the shared VPC, so it also has to go before the `SharedInfra` stack can be deleted (see [Teardown](#teardown)).
 
 The task definitions of an `aurora` connector carry these settings, on both planes:
 
 | Setting | Value |
 |---|---|
-| `edc.datasource.default.url` | `jdbc:postgresql://<cluster endpoint>:5432/edc?sslmode=require` (Aurora PostgreSQL forces TLS) |
+| `edc.datasource.default.url` | `jdbc:postgresql://<cluster endpoint>:5432/edc?sslmode=require` (Aurora PostgreSQL 17 and newer force TLS) |
 | `EDC_DATASOURCE_DEFAULT_USER`, `EDC_DATASOURCE_DEFAULT_PASSWORD` | ECS secrets read from the cluster's credentials secret (EDC maps them to `edc.datasource.default.user` / `.password`) |
 | `edc.participant.context.id` | The participant DID, same as `edc.participant.id`; required by `connector-migration` and must never change |
 | `tx.edc.postgresql.migration.enabled` | `true` |
